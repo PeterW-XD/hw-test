@@ -16,12 +16,10 @@ module fft_wrapper(
 	input logic [9:0]rd_addr_fft,	// Read address of fft RAMs
 
 	output logic out_ready,			// Reserved
-	output logic [10:0]addr_raw,// Read address of the raw data RAMs
+	output logic rdreq,			// Read request
 	output logic [27:0]ram_q		// fft results from fft RAM
 );
 
-logic ready_ff1, ready_raw;	// ready signal synchronize: SCK->clk
-logic go_ff1, go_ff2;		// go signal: SCK->clk
 logic [9:0]count;		// 1024 counter
 logic sor; 				// start of read (raw data)
 // fft ip singals
@@ -31,7 +29,8 @@ logic [13:0] source_real, source_imag;
 // RAM signals
 logic [9:0] wr_addr;
 logic wren;
-logic flag;
+logic [10:0] addr_raw;
+logic flag; // Toggle to differ control wren
 
 enum {IDLE, READ, WRITE, READY} state;
 enum {VACANT, START} state_wr_addr;
@@ -46,7 +45,7 @@ always @(posedge clk) begin
 		count = 10'd1;
 		sink_valid <= 1'd0;
 		sink_eop <= 1'd0;
-		sink_sop <=1'd0;
+		sink_sop <= 1'd0;
 		sor <= 1'd0;
 	end else begin
 		count <= count + 1'b1;
@@ -56,9 +55,9 @@ always @(posedge clk) begin
 			sink_valid <= 1;
 		end else if(count == 10'd1) begin 
 			sink_sop <= 0;
-		end else if (count == 10'd1020) begin
-			sor <= 1;
 		end else if (count == 10'd1021) begin
+			sor <= 1;
+		end else if (count == 10'd1022) begin
 			sor <= 0;
 		end else if (count == 10'd1023) begin
 			sink_eop <= 1;
@@ -78,40 +77,33 @@ end
 always_ff @(posedge clk) begin
 	if (~rst_n) begin
 		state <= IDLE;
-		ready_ff1 <= 1'd0;
-		ready_raw <= 1'd0;
-		go_ff1 <= 1'd0;
-		go_ff2 <= 1'd0;
 		addr_raw <= 11'd2047;
 		wren <= 1'd0;
 		out_ready <= 1'd0;
+		rdreq <= 1'd0;
 		flag <= 1'd0;
 	end else begin
-		// Synchronize from SCK -> clk (Slow -> Fast) with 2 flip-flops
-		ready_ff1 <= ready;
-		ready_raw <= ready_ff1;
-		go_ff1 <= go;
-		go_ff2 <= go_ff1;	
-
 		case (state)
 			IDLE: begin
 				out_ready <= 1'd0;
-				if (ready_raw && sink_ready && sor) 
+				if (ready && sink_ready && sor) 
 					state <= READ;
 				else
 					state <= IDLE; 
 			end
 			READ: begin
-				// rdreq <= 1'd1;
 				addr_raw <= addr_raw + 11'd1;
-				if (addr_raw == 11'd2046) begin // because the calculation delay of fft is about 1024
+				if (addr_raw == 11'd1023) begin
+					rdreq <= 1'd0;
+				end else if (addr_raw == 11'd2046) begin // because the calculation delay of fft is about 1024
 					state <= WRITE;
+				end else if (addr_raw == 11'd2047) begin
+					rdreq <= 1'd1;
 				end else begin
 					state <= READ;
 				end
 			end
 			WRITE: begin
-				// rdreq <= 1'd0;
 				if (source_eop) begin
 					wren <= 1'd1;
 					flag <= 1'd1;
@@ -126,7 +118,7 @@ always_ff @(posedge clk) begin
 				flag <= 1'd0;
 				wren <= 1'd0;
 				out_ready <= 1'd1;
-				if (go_ff2)
+				if (go)
 					state <= IDLE;
 				else
 					state <= READY;
@@ -190,7 +182,7 @@ fft_block fft_init(
 ram_fft_output fft_ram1(
 	.clock		(clk),
 	.data		({source_real, source_imag}),	// 28 bits width
-	.rdaddress	(rd_addr_fft),				// 10 bits width address
+	.rdaddress	(rd_addr_fft),					// 10 bits width address
 	.wraddress	(wr_addr),
 	.wren		(wren),
 	.q			(ram_q)
