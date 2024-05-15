@@ -42,6 +42,8 @@ logic rdreq1, rdreq2, rdreq3, rdreq4;
 // FFT wrapper
 logic [27:0] ram1_fft, ram2_fft, ram3_fft, ram4_fft;	// RAM outputs for fft RAM
 logic [9:0] rd_addr_hps;		// Read address for fft RAM (testing purpose)
+logic fftdone, detectdone;
+logic [9:0] rd_addr_fd, maxbin;
 
 enum {IDLE, WRITE, READ} state;
 
@@ -178,18 +180,26 @@ myfifo fifo1(
 fft_wrapper fft1(
 	.clk(clk),
 	.rst_n(rst_n),
-	.go(go),
+	.go(detectdone),
 	.ready(ready1),		    // Raw data ready
 	.data_in(ram1q[15:2]),	// Raw data in
-	.rd_addr_fft(rd_addr_hps),// Read address of fft RAMs
+	.rd_addr_fft(rd_addr_fd),// Read address of fft RAMs
 
-	.out_ready(),
+	.out_ready(fftdone),
 	.rdreq(rdreq1),
 	.ram_q(ram1_fft)			// fft results from fft RAMs
 );
 
-/* FFT wrapper module instantiation
- */ 
+freqdetect fd1(
+	.clk		(clk),		// 50 MHz, 20 ns
+	.reset		(~rst_n),		
+	.fftdone	(fftdone),	// Set high upon FFT block finishing
+	.ramq		(ram1_fft),	// Output port of channel 1 FFT RAM
+
+	.detectdone	(detectdone),		// Set high when iteration is complete
+	.ramaddr	(rd_addr_fd),		// Address to read from RAM
+	.maxbin	(maxbin)// Index of max bin
+);
 
 /* Avalon bus configuration
  * readdata: FPGA -> HPS
@@ -203,7 +213,7 @@ always_ff @(posedge clk) begin
 		rd_addr_hps <= 10'd0;
 	end else if (chipselect && read) begin
 		case (address)
-		3'h0: readdata <= {{4{1'b0}}, ram1_fft};
+		3'h0: readdata <= {{22{1'b0}}, maxbin};
 		3'h1: readdata <= {{4{1'b0}}, ram1q};
 		3'h2: readdata <= {{4{1'b0}}, ram1q};
 		3'h3: readdata <= {{4{1'b0}}, ram1q};
